@@ -24,6 +24,11 @@ Block Blast is a puzzle game where you place different shaped blocks on a grid. 
 2. Install the required dependencies using pip:
 
 ```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+```bash
 pip install pygame>=2.6.1
 ```
 
@@ -36,7 +41,7 @@ pip install .
 ## How to Run
 
 ```bash
-python main.py
+python3 main.py
 ```
 
 ## How to Play
