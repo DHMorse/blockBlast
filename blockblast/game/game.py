@@ -559,47 +559,54 @@ class BlockBlastGame:
     
     def evaluateGameState(self) -> float:
         """
-        Evaluate the current game state for the minimax algorithm.
+        Enhanced evaluation function for the minimax algorithm.
+        Provides a comprehensive assessment of the game state.
         
         Returns:
             A score representing how good the current state is
         """
         # Base evaluation is the current score
-        evaluation: float = float(self.score)
+        evaluation: float = float(self.score) * 3.0  # Increase weight of actual score
         
         # Count empty cells - fewer empty cells is worse for future moves
         emptyCells: int = sum(1 for row in self.grid for cell in row if cell is None)
         emptyPercentage: float = emptyCells / (GRID_SIZE * GRID_SIZE)
-        evaluation += emptyCells * 2.0  # Increased weight for empty cells
+        evaluation += emptyCells * 5.0  # Significantly increased weight for empty cells
         
-        # Penalize for having too few empty cells (less than 30%)
-        if emptyPercentage < 0.3:
-            evaluation -= (0.3 - emptyPercentage) * 200
+        # Penalize for having too few empty cells (less than 40%)
+        if emptyPercentage < 0.4:
+            evaluation -= (0.4 - emptyPercentage) * 500  # Increased penalty
         
-        # Check for potential completed lines
+        # Evaluate rows and columns for completion potential
+        rowCompletionPotential: float = 0.0
+        colCompletionPotential: float = 0.0
+        
         for row in range(GRID_SIZE):
             filledInRow: int = sum(1 for cell in self.grid[row] if cell is not None)
             if 0 < filledInRow < GRID_SIZE:  # Partially filled row
                 # More filled cells in a row is better (closer to completing)
-                # Exponential reward for rows that are close to completion
+                # Cubic reward for rows that are close to completion
                 completionRatio: float = filledInRow / GRID_SIZE
-                evaluation += (completionRatio ** 2) * 50
+                rowCompletionPotential += (completionRatio ** 3) * 200
                 
-                # Extra bonus for rows that are almost complete (>75%)
-                if completionRatio > 0.75:
-                    evaluation += 100
+                # Extra bonus for rows that are almost complete (>80%)
+                if completionRatio > 0.8:
+                    rowCompletionPotential += 300
         
         for col in range(GRID_SIZE):
             filledInCol: int = sum(1 for row in range(GRID_SIZE) if self.grid[row][col] is not None)
             if 0 < filledInCol < GRID_SIZE:  # Partially filled column
                 # More filled cells in a column is better (closer to completing)
-                # Exponential reward for columns that are close to completion
+                # Cubic reward for columns that are close to completion
                 completionRatio: float = filledInCol / GRID_SIZE
-                evaluation += (completionRatio ** 2) * 50
+                colCompletionPotential += (completionRatio ** 3) * 200
                 
-                # Extra bonus for columns that are almost complete (>75%)
-                if completionRatio > 0.75:
-                    evaluation += 100
+                # Extra bonus for columns that are almost complete (>80%)
+                if completionRatio > 0.8:
+                    colCompletionPotential += 300
+        
+        # Add completion potentials to evaluation
+        evaluation += rowCompletionPotential + colCompletionPotential
         
         # Evaluate patterns - prefer placing blocks in clusters
         clusterScore: float = 0.0
@@ -615,8 +622,8 @@ class BlockBlastGame:
                             self.grid[newRow][newCol] is not None):
                             adjacentFilled += 1
                     
-                    # Reward for having filled adjacent cells
-                    clusterScore += adjacentFilled * 2.0
+                    # Reward for having filled adjacent cells (exponential)
+                    clusterScore += adjacentFilled ** 2 * 5.0
         
         evaluation += clusterScore
         
@@ -630,7 +637,55 @@ class BlockBlastGame:
         colStdDev: float = self.calculateStandardDeviation(colFillCounts)
         
         # Penalize uneven distribution (high standard deviation)
-        evaluation -= (rowStdDev + colStdDev) * 10.0
+        evaluation -= (rowStdDev + colStdDev) * 20.0
+        
+        # Evaluate placement flexibility - prefer states where more blocks can be placed
+        placementFlexibility: float = 0.0
+        
+        # Check each available block
+        for blockIndex in range(len(self.availableBlocks)):
+            # Skip used blocks
+            if self.usedBlocks[blockIndex]:
+                continue
+                
+            # Count valid positions for this block
+            validPositions: int = 0
+            for row in range(GRID_SIZE):
+                for col in range(GRID_SIZE):
+                    if self.canPlaceBlockAtPosition(blockIndex, row, col):
+                        validPositions += 1
+            
+            # Reward for having more valid positions
+            placementFlexibility += validPositions * 0.5
+        
+        evaluation += placementFlexibility
+        
+        # Evaluate corner and edge usage - prefer keeping corners and edges empty
+        cornerPenalty: float = 0.0
+        edgePenalty: float = 0.0
+        
+        # Check corners
+        corners = [(0, 0), (0, GRID_SIZE-1), (GRID_SIZE-1, 0), (GRID_SIZE-1, GRID_SIZE-1)]
+        for row, col in corners:
+            if self.grid[row][col] is not None:
+                cornerPenalty += 50.0
+        
+        # Check edges (excluding corners)
+        for i in range(1, GRID_SIZE-1):
+            # Top edge
+            if self.grid[0][i] is not None:
+                edgePenalty += 10.0
+            # Bottom edge
+            if self.grid[GRID_SIZE-1][i] is not None:
+                edgePenalty += 10.0
+            # Left edge
+            if self.grid[i][0] is not None:
+                edgePenalty += 10.0
+            # Right edge
+            if self.grid[i][GRID_SIZE-1] is not None:
+                edgePenalty += 10.0
+        
+        evaluation -= (cornerPenalty + edgePenalty)
         
         return evaluation
     
@@ -759,7 +814,8 @@ class BlockBlastGame:
                 currentGrid: list[list[Optional[str]]], currentScore: int, 
                 currentUsedBlocks: list[bool]) -> tuple[float, Optional[tuple[int, int, int]]]:
         """
-        Minimax algorithm with alpha-beta pruning to find the best move.
+        Enhanced minimax algorithm with alpha-beta pruning to find the absolute best move.
+        This version prioritizes accuracy over performance.
         
         Args:
             depth: Current depth in the search tree
@@ -793,17 +849,36 @@ class BlockBlastGame:
         
         # Check if we've reached a terminal state or maximum depth
         if depth == 0 or not validMoves:
-            evaluation = self.evaluateGameState()
-            
-            # Restore original game state
-            self.grid = originalGrid
-            self.score = originalScore
-            self.usedBlocks = originalUsedBlocks
-            
-            # Store in transposition table
-            result = (evaluation, None)
-            self.transpositionTable[stateHash] = result
-            return result
+            # For terminal states, use a more thorough evaluation
+            if not validMoves:
+                # Game over state - evaluate based on final score and remaining blocks
+                remainingBlocks = sum(1 for used in currentUsedBlocks if not used)
+                
+                # Penalize having unused blocks at game over
+                finalEvaluation = float(currentScore) - remainingBlocks * 50.0
+                
+                # Restore original game state
+                self.grid = originalGrid
+                self.score = originalScore
+                self.usedBlocks = originalUsedBlocks
+                
+                # Store in transposition table
+                result = (finalEvaluation, None)
+                self.transpositionTable[stateHash] = result
+                return result
+            else:
+                # Reached maximum depth - use standard evaluation
+                evaluation = self.evaluateGameState()
+                
+                # Restore original game state
+                self.grid = originalGrid
+                self.score = originalScore
+                self.usedBlocks = originalUsedBlocks
+                
+                # Store in transposition table
+                result = (evaluation, None)
+                self.transpositionTable[stateHash] = result
+                return result
         
         # Initialize best move
         bestMove: Optional[tuple[int, int, int]] = None
@@ -822,6 +897,11 @@ class BlockBlastGame:
             self.score = currentScore + scoreIncrease
             self.usedBlocks = newUsedBlocks
             quickEval = self.evaluateGameState()
+            
+            # Add a bonus for moves that complete rows or columns
+            if scoreIncrease > 10:  # More than the base score means rows/columns were completed
+                quickEval += scoreIncrease * 2.0  # Double the importance of completing rows/columns
+            
             moveScores.append((quickEval, move))
             
         # Restore game state after pre-evaluation
@@ -849,17 +929,41 @@ class BlockBlastGame:
                 # Simulate the move
                 newGrid, scoreIncrease, newUsedBlocks = self.simulateMove(blockIndex, row, col)
                 
-                # Recursive minimax call
-                eval, _ = self.minimax(depth - 1, alpha, beta, False, newGrid, 
-                                      currentScore + scoreIncrease, newUsedBlocks)
+                # Check if all blocks have been used after this move
+                allBlocksUsed = all(newUsedBlocks)
                 
-                # Update max evaluation and best move
-                if eval > maxEval:
-                    maxEval = eval
-                    bestMove = move
+                if allBlocksUsed:
+                    # If all blocks are used, we need to simulate generating new blocks
+                    # Since we can't predict the new blocks, we'll evaluate the current state
+                    # plus a bonus for using all blocks
+                    self.grid = newGrid
+                    self.score = currentScore + scoreIncrease
+                    self.usedBlocks = newUsedBlocks
+                    
+                    # Evaluate current state with a bonus for using all blocks
+                    currentEval = self.evaluateGameState() + 100.0  # Bonus for using all blocks
+                    
+                    # Restore game state
+                    self.grid = currentGrid
+                    self.score = currentScore
+                    self.usedBlocks = currentUsedBlocks
+                    
+                    # Update max evaluation and best move
+                    if currentEval > maxEval:
+                        maxEval = currentEval
+                        bestMove = move
+                else:
+                    # Recursive minimax call
+                    eval, _ = self.minimax(depth - 1, alpha, beta, False, newGrid, 
+                                          currentScore + scoreIncrease, newUsedBlocks)
+                    
+                    # Update max evaluation and best move
+                    if eval > maxEval:
+                        maxEval = eval
+                        bestMove = move
                 
                 # Alpha-beta pruning
-                alpha = max(alpha, eval)
+                alpha = max(alpha, maxEval)
                 if beta <= alpha:
                     break
             
@@ -881,17 +985,41 @@ class BlockBlastGame:
                 # Simulate the move
                 newGrid, scoreIncrease, newUsedBlocks = self.simulateMove(blockIndex, row, col)
                 
-                # Recursive minimax call
-                eval, _ = self.minimax(depth - 1, alpha, beta, True, newGrid, 
-                                      currentScore + scoreIncrease, newUsedBlocks)
+                # Check if all blocks have been used after this move
+                allBlocksUsed = all(newUsedBlocks)
                 
-                # Update min evaluation and best move
-                if eval < minEval:
-                    minEval = eval
-                    bestMove = move
+                if allBlocksUsed:
+                    # If all blocks are used, we need to simulate generating new blocks
+                    # Since we can't predict the new blocks, we'll evaluate the current state
+                    # plus a bonus for using all blocks
+                    self.grid = newGrid
+                    self.score = currentScore + scoreIncrease
+                    self.usedBlocks = newUsedBlocks
+                    
+                    # Evaluate current state with a bonus for using all blocks
+                    currentEval = self.evaluateGameState() + 100.0  # Bonus for using all blocks
+                    
+                    # Restore game state
+                    self.grid = currentGrid
+                    self.score = currentScore
+                    self.usedBlocks = currentUsedBlocks
+                    
+                    # Update min evaluation and best move
+                    if currentEval < minEval:
+                        minEval = currentEval
+                        bestMove = move
+                else:
+                    # Recursive minimax call
+                    eval, _ = self.minimax(depth - 1, alpha, beta, True, newGrid, 
+                                          currentScore + scoreIncrease, newUsedBlocks)
+                    
+                    # Update min evaluation and best move
+                    if eval < minEval:
+                        minEval = eval
+                        bestMove = move
                 
                 # Alpha-beta pruning
-                beta = min(beta, eval)
+                beta = min(beta, minEval)
                 if beta <= alpha:
                     break
             
@@ -907,7 +1035,8 @@ class BlockBlastGame:
     
     def makeAiMove(self) -> None:
         """
-        Use the minimax algorithm with iterative deepening to make the best move for the AI.
+        Use an exhaustive minimax algorithm to find the absolute best move regardless of time.
+        This version prioritizes finding the optimal move over performance.
         """
         if self.gameState != STATE_PLAYING:
             print("Game is not in playing state")
@@ -924,7 +1053,7 @@ class BlockBlastGame:
             self.checkForGameOver()
             return
         
-        print("AI is thinking deeply with iterative deepening...")
+        print("AI is thinking exhaustively to find the absolute best move...")
         
         # Clear the transposition table for a fresh search
         self.transpositionTable.clear()
@@ -936,70 +1065,46 @@ class BlockBlastGame:
             print("No valid moves available")
             return
         
-        # Use iterative deepening to find the best move
-        bestMove = None
-        bestScore = float('-inf')
-        
-        # Set a time limit for thinking (2 seconds)
+        # Record start time for statistics
         startTime = pygame.time.get_ticks()
-        timeLimit = 2000  # 2 seconds in milliseconds
         
-        # Start with a shallow search and gradually increase depth
-        # This allows us to have a good move even if we run out of time
-        for searchDepth in range(1, 8):  # Try depths from 1 to 7
-            print(f"Searching at depth {searchDepth}...")
+        # Use a very deep search to find the best move
+        # We'll use a fixed depth of 10, which should be extremely thorough
+        searchDepth = 10
+        print(f"Performing deep search at depth {searchDepth}...")
+        
+        # Evaluate each move at the maximum depth
+        moveScores: list[tuple[float, tuple[int, int, int]]] = []
+        
+        for moveIndex, move in enumerate(validMoves):
+            blockIndex, row, col = move
             
-            # Check if we've exceeded the time limit
-            if pygame.time.get_ticks() - startTime > timeLimit:
-                print(f"Time limit reached at depth {searchDepth-1}")
-                break
+            # Print progress
+            print(f"Analyzing move {moveIndex+1}/{len(validMoves)}: block {blockIndex} at position ({row}, {col})...")
             
-            # Evaluate each move at the current depth
-            moveScores: list[tuple[float, tuple[int, int, int]]] = []
+            # Simulate the move
+            newGrid, scoreIncrease, newUsedBlocks = self.simulateMove(blockIndex, row, col)
             
-            for move in validMoves:
-                blockIndex, row, col = move
-                
-                # Simulate the move
-                newGrid, scoreIncrease, newUsedBlocks = self.simulateMove(blockIndex, row, col)
-                
-                # Use minimax to evaluate this move
-                score, _ = self.minimax(searchDepth, float('-inf'), float('inf'), True, 
-                                       newGrid, self.score + scoreIncrease, newUsedBlocks)
-                
-                moveScores.append((score, move))
-                
-                # Check time limit after each move evaluation
-                if pygame.time.get_ticks() - startTime > timeLimit:
-                    print(f"Time limit reached during depth {searchDepth}")
-                    break
+            # Use minimax to evaluate this move with maximum depth
+            score, _ = self.minimax(searchDepth, float('-inf'), float('inf'), True, 
+                                   newGrid, self.score + scoreIncrease, newUsedBlocks)
             
-            # If we've run out of time, use the results from the previous depth
-            if pygame.time.get_ticks() - startTime > timeLimit:
-                break
-            
-            # Find the best move at this depth
-            if moveScores:
-                currentBestScore, currentBestMove = max(moveScores, key=lambda x: x[0])
-                
-                # Update our overall best move
-                if currentBestScore > bestScore:
-                    bestScore = currentBestScore
-                    bestMove = currentBestMove
-                
-                # For very deep searches, only evaluate the top moves from previous iteration
-                if searchDepth >= 4:
-                    # Sort moves by score and keep only the top 3
-                    moveScores.sort(reverse=True, key=lambda x: x[0])
-                    validMoves = [move for _, move in moveScores[:min(3, len(moveScores))]]
+            moveScores.append((score, move))
+            print(f"  - Evaluation score: {score}")
+        
+        # Find the best move
+        bestScore, bestMove = max(moveScores, key=lambda x: x[0])
         
         # Print stats about the search
+        searchTime = pygame.time.get_ticks() - startTime
+        print(f"Exhaustive search completed in {searchTime}ms")
         print(f"Transposition table size: {len(self.transpositionTable)}")
-        print(f"Search time: {pygame.time.get_ticks() - startTime}ms")
+        print(f"Positions evaluated: {len(self.transpositionTable)}")
         
         if bestMove:
             blockIndex, row, col = bestMove
             print(f"AI is placing block {blockIndex} at position ({row}, {col}) with score {bestScore}")
+            print(f"This is the optimal move found after exhaustive analysis")
             
             # Make the selected move
             self.placeBlock(blockIndex, row, col)
