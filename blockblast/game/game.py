@@ -50,6 +50,12 @@ class BlockBlastGame:
         
         # AI button properties
         self.aiButtonRect: Optional[pygame.Rect] = None
+        self.aiPlaying: bool = False
+        self.aiMoveDelay: int = 500  # Milliseconds between AI moves
+        self.lastAiMoveTime: int = 0
+        
+        # Transposition table for minimax algorithm
+        self.transpositionTable: dict[str, tuple[float, Optional[tuple[int, int, int]]]] = {}
     
     def initGame(self) -> None:
         """
@@ -349,14 +355,17 @@ class BlockBlastGame:
         buttonY = 20
         
         # Create the AI button with a purple color
+        buttonText = "Stop AI" if self.aiPlaying else "AI Play"
+        buttonColor = (255, 0, 0) if self.aiPlaying else (128, 0, 255)  # Red when active, purple when inactive
+        
         self.aiButtonRect = createButton(
             self.screen, 
-            "AI", 
+            buttonText, 
             buttonX, 
             buttonY, 
             buttonWidth, 
             buttonHeight, 
-            (128, 0, 255),  # Purple color
+            buttonColor,
             WHITE,
             36
         )
@@ -477,7 +486,14 @@ class BlockBlastGame:
                     
                     # Check if AI button was clicked
                     if self.aiButtonRect and self.aiButtonRect.collidepoint(mousePos):
-                        print("AI button pressed!")
+                        # Toggle AI playing state
+                        self.aiPlaying = not self.aiPlaying
+                        if self.aiPlaying:
+                            print("AI play started!")
+                            # Reset the last move time to make the first move immediately
+                            self.lastAiMoveTime = 0
+                        else:
+                            print("AI play stopped!")
                         return True
                     
                     # Handle game over state
@@ -541,6 +557,257 @@ class BlockBlastGame:
         
         return True
     
+    def evaluateGameState(self) -> float:
+        """
+        Evaluate the current game state for the minimax algorithm.
+        
+        Returns:
+            A score representing how good the current state is
+        """
+        # Base evaluation is the current score
+        evaluation: float = float(self.score)
+        
+        # Count empty cells - fewer empty cells is worse for future moves
+        emptyCells: int = sum(1 for row in self.grid for cell in row if cell is None)
+        evaluation += emptyCells * 0.5  # Small bonus for having more empty cells
+        
+        # Check for potential completed lines
+        for row in range(GRID_SIZE):
+            filledInRow: int = sum(1 for cell in self.grid[row] if cell is not None)
+            if 0 < filledInRow < GRID_SIZE:  # Partially filled row
+                # More filled cells in a row is better (closer to completing)
+                evaluation += (filledInRow / GRID_SIZE) * 10
+        
+        for col in range(GRID_SIZE):
+            filledInCol: int = sum(1 for row in range(GRID_SIZE) if self.grid[row][col] is not None)
+            if 0 < filledInCol < GRID_SIZE:  # Partially filled column
+                # More filled cells in a column is better (closer to completing)
+                evaluation += (filledInCol / GRID_SIZE) * 10
+        
+        return evaluation
+    
+    def getValidMoves(self) -> list[tuple[int, int, int]]:
+        """
+        Get all valid moves for the current game state.
+        
+        Returns:
+            A list of tuples (blockIndex, row, col) representing valid moves
+        """
+        validMoves: list[tuple[int, int, int]] = []
+        
+        # Check each available block
+        for blockIndex in range(len(self.availableBlocks)):
+            # Skip used blocks
+            if self.usedBlocks[blockIndex]:
+                continue
+            
+            # Check every position on the grid
+            for row in range(GRID_SIZE):
+                for col in range(GRID_SIZE):
+                    if self.canPlaceBlockAtPosition(blockIndex, row, col):
+                        validMoves.append((blockIndex, row, col))
+        
+        return validMoves
+    
+    def simulateMove(self, blockIndex: int, row: int, col: int) -> tuple[list[list[Optional[str]]], int, list[bool]]:
+        """
+        Simulate placing a block without modifying the actual game state.
+        
+        Args:
+            blockIndex: Index of the block to place
+            row: Grid row to place the block
+            col: Grid column to place the block
+            
+        Returns:
+            A tuple containing the new grid, score increase, and updated usedBlocks
+        """
+        # Create a copy of the current grid
+        newGrid: list[list[Optional[str]]] = [row.copy() for row in self.grid]
+        
+        # Get the block to place
+        block = self.availableBlocks[blockIndex]
+        shape = block["shape"]
+        colorName = block["colorName"]
+        
+        # Place the block on the grid copy
+        for r in range(len(shape)):
+            for c in range(len(shape[0])):
+                if shape[r][c]:
+                    newGrid[row + r][col + c] = colorName
+        
+        # Calculate score increase (base score for placing a block)
+        scoreIncrease: int = 10
+        
+        # Create a copy of usedBlocks and mark this block as used
+        newUsedBlocks: list[bool] = self.usedBlocks.copy()
+        newUsedBlocks[blockIndex] = True
+        
+        # Check for completed rows
+        rowsToRemove: list[int] = []
+        for r in range(GRID_SIZE):
+            if all(newGrid[r][c] is not None for c in range(GRID_SIZE)):
+                rowsToRemove.append(r)
+        
+        # Check for completed columns
+        colsToRemove: list[int] = []
+        for c in range(GRID_SIZE):
+            if all(newGrid[r][c] is not None for r in range(GRID_SIZE)):
+                colsToRemove.append(c)
+        
+        # Clear completed rows and add to score
+        for r in rowsToRemove:
+            for c in range(GRID_SIZE):
+                newGrid[r][c] = None
+            scoreIncrease += 100
+        
+        # Clear completed columns and add to score
+        for c in colsToRemove:
+            for r in range(GRID_SIZE):
+                newGrid[r][c] = None
+            scoreIncrease += 100
+        
+        return newGrid, scoreIncrease, newUsedBlocks
+    
+    def minimax(self, depth: int, alpha: float, beta: float, isMaximizing: bool, 
+                currentGrid: list[list[Optional[str]]], currentScore: int, 
+                currentUsedBlocks: list[bool]) -> tuple[float, Optional[tuple[int, int, int]]]:
+        """
+        Minimax algorithm with alpha-beta pruning to find the best move.
+        
+        Args:
+            depth: Current depth in the search tree
+            alpha: Alpha value for pruning
+            beta: Beta value for pruning
+            isMaximizing: Whether this is a maximizing node
+            currentGrid: Current grid state
+            currentScore: Current score
+            currentUsedBlocks: Current state of used blocks
+            
+        Returns:
+            A tuple containing the evaluation score and the best move (or None if at a leaf node)
+        """
+        # Save original game state
+        originalGrid = self.grid
+        originalScore = self.score
+        originalUsedBlocks = self.usedBlocks
+        
+        # Set temporary game state for evaluation
+        self.grid = currentGrid
+        self.score = currentScore
+        self.usedBlocks = currentUsedBlocks
+        
+        # Get valid moves in this state
+        validMoves = self.getValidMoves()
+        
+        # Check if we've reached a terminal state or maximum depth
+        if depth == 0 or not validMoves:
+            evaluation = self.evaluateGameState()
+            
+            # Restore original game state
+            self.grid = originalGrid
+            self.score = originalScore
+            self.usedBlocks = originalUsedBlocks
+            
+            return evaluation, None
+        
+        # Initialize best move
+        bestMove: Optional[tuple[int, int, int]] = None
+        
+        if isMaximizing:
+            maxEval: float = float('-inf')
+            
+            for move in validMoves:
+                blockIndex, row, col = move
+                
+                # Simulate the move
+                newGrid, scoreIncrease, newUsedBlocks = self.simulateMove(blockIndex, row, col)
+                
+                # Recursive minimax call
+                eval, _ = self.minimax(depth - 1, alpha, beta, False, newGrid, 
+                                      currentScore + scoreIncrease, newUsedBlocks)
+                
+                # Update max evaluation and best move
+                if eval > maxEval:
+                    maxEval = eval
+                    bestMove = move
+                
+                # Alpha-beta pruning
+                alpha = max(alpha, eval)
+                if beta <= alpha:
+                    break
+            
+            # Restore original game state
+            self.grid = originalGrid
+            self.score = originalScore
+            self.usedBlocks = originalUsedBlocks
+            
+            return maxEval, bestMove
+        else:
+            minEval: float = float('inf')
+            
+            for move in validMoves:
+                blockIndex, row, col = move
+                
+                # Simulate the move
+                newGrid, scoreIncrease, newUsedBlocks = self.simulateMove(blockIndex, row, col)
+                
+                # Recursive minimax call
+                eval, _ = self.minimax(depth - 1, alpha, beta, True, newGrid, 
+                                      currentScore + scoreIncrease, newUsedBlocks)
+                
+                # Update min evaluation and best move
+                if eval < minEval:
+                    minEval = eval
+                    bestMove = move
+                
+                # Alpha-beta pruning
+                beta = min(beta, eval)
+                if beta <= alpha:
+                    break
+            
+            # Restore original game state
+            self.grid = originalGrid
+            self.score = originalScore
+            self.usedBlocks = originalUsedBlocks
+            
+            return minEval, bestMove
+    
+    def makeAiMove(self) -> None:
+        """
+        Use the minimax algorithm to make the best move for the AI.
+        """
+        if self.gameState != STATE_PLAYING:
+            print("Game is not in playing state")
+            return
+        
+        # Check if all blocks have been used
+        if all(self.usedBlocks):
+            print("Generating new blocks for AI")
+            # Generate new blocks
+            self.availableBlocks = generateRandomBlocks(MAX_AVAILABLE_BLOCKS)
+            # Reset used blocks tracker
+            self.usedBlocks = [False] * MAX_AVAILABLE_BLOCKS
+            # Check if there are any valid moves with the new blocks
+            self.checkForGameOver()
+            return
+        
+        print("AI is thinking...")
+        
+        # Use minimax to find the best move
+        # Limit depth to 3 for performance reasons
+        _, bestMove = self.minimax(3, float('-inf'), float('inf'), True, 
+                                  [row.copy() for row in self.grid], 
+                                  self.score, self.usedBlocks.copy())
+        
+        if bestMove:
+            blockIndex, row, col = bestMove
+            print(f"AI is placing block {blockIndex} at position ({row}, {col})")
+            
+            # Make the selected move
+            self.placeBlock(blockIndex, row, col)
+        else:
+            print("AI couldn't find a valid move")
+    
     def run(self) -> None:
         """
         Main game loop.
@@ -551,6 +818,13 @@ class BlockBlastGame:
         while running:
             # Handle events
             running = self.handleEvents()
+            
+            # Make AI move if AI is playing
+            currentTime = pygame.time.get_ticks()
+            if self.aiPlaying and self.gameState == STATE_PLAYING:
+                if currentTime - self.lastAiMoveTime >= self.aiMoveDelay:
+                    self.makeAiMove()
+                    self.lastAiMoveTime = currentTime
             
             # Draw background
             self.screen.fill(BLUE_BG)
@@ -564,6 +838,8 @@ class BlockBlastGame:
                 self.drawAvailableBlocks()
             elif self.gameState == STATE_GAME_OVER:
                 self.drawGameOver()
+                # Stop AI playing when game is over
+                self.aiPlaying = False
             
             pygame.display.flip()
-            clock.tick(60) 
+            clock.tick(60)
