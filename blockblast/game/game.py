@@ -13,7 +13,7 @@ from blockblast.utils.constants import (
 )
 from blockblast.utils.score import loadHighScore, saveHighScore
 from blockblast.game.blocks import generateRandomBlocks
-from blockblast.ui.components import createCrownIcon, drawBlock
+from blockblast.ui.components import createCrownIcon, drawBlock, createButton
 from blockblast.utils.audio import MusicPlayer
 
 class BlockBlastGame:
@@ -47,6 +47,9 @@ class BlockBlastGame:
         self.musicPlayer = MusicPlayer()
         # Start playing music
         self.musicPlayer.start()
+        
+        # AI button properties
+        self.aiButtonRect: Optional[pygame.Rect] = None
     
     def initGame(self) -> None:
         """
@@ -325,23 +328,38 @@ class BlockBlastGame:
     
     def drawScore(self) -> None:
         """
-        Draw the score display at the top of the screen.
+        Draw the current score and high score.
         """
-        # Draw crown icon
-        self.screen.blit(self.crownIcon, (20, 20))
+        # Draw score
+        scoreText = self.smallFont.render(f"Score: {self.score}", True, WHITE)
+        self.screen.blit(scoreText, (20, 20))
         
-        # Draw score next to crown
-        scoreText = self.smallFont.render(str(self.score), True, WHITE)
-        self.screen.blit(scoreText, (60, 25))
+        # Draw high score with crown icon
+        highScoreText = self.smallFont.render(f"High Score: {self.highScore}", True, GOLD)
+        self.screen.blit(highScoreText, (SCREEN_WIDTH - 20 - highScoreText.get_width(), 20))
+        self.screen.blit(self.crownIcon, (SCREEN_WIDTH - 20 - highScoreText.get_width() - 35, 15))
+    
+    def drawAiButton(self) -> None:
+        """
+        Draw the AI button in the top center of the screen.
+        """
+        buttonWidth = 120
+        buttonHeight = 40
+        buttonX = (SCREEN_WIDTH - buttonWidth) // 2
+        buttonY = 20
         
-        # Draw large score in the center top
-        largeScoreText = self.largeFont.render(str(self.score), True, WHITE)
-        scoreRect = largeScoreText.get_rect(center=(SCREEN_WIDTH // 2, 60))
-        self.screen.blit(largeScoreText, scoreRect)
-        
-        # Draw high score in small text at the top right
-        highScoreText = self.tinyFont.render(f"High: {self.highScore}", True, GOLD)
-        self.screen.blit(highScoreText, (SCREEN_WIDTH - 100, 25))
+        # Create the AI button with a purple color
+        self.aiButtonRect = createButton(
+            self.screen, 
+            "AI", 
+            buttonX, 
+            buttonY, 
+            buttonWidth, 
+            buttonHeight, 
+            (128, 0, 255),  # Purple color
+            WHITE,
+            36
+        )
     
     def getGridCoordinates(self) -> Tuple[int, int]:
         """
@@ -457,6 +475,11 @@ class BlockBlastGame:
                 if event.button == 1:  # Left mouse button
                     mousePos = pygame.mouse.get_pos()
                     
+                    # Check if AI button was clicked
+                    if self.aiButtonRect and self.aiButtonRect.collidepoint(mousePos):
+                        print("AI button pressed!")
+                        return True
+                    
                     # Handle game over state
                     if self.gameState == STATE_GAME_OVER:
                         # Check if replay button was clicked
@@ -534,6 +557,7 @@ class BlockBlastGame:
             
             # Draw game elements
             self.drawScore()
+            self.drawAiButton()
             self.drawGrid()
             
             if self.gameState == STATE_PLAYING:

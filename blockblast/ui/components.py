@@ -74,4 +74,43 @@ def drawBlock(screen: pygame.Surface, x: int, y: int, color: Tuple[int, int, int
         (x + 5, y + size - 5),
         (x + size - 5, y + size - 5),
         (x + size - 5, y + 5)
-    ]) 
+    ])
+
+def createButton(screen: pygame.Surface, text: str, x: int, y: int, width: int, height: int, 
+                color: Tuple[int, int, int], textColor: Tuple[int, int, int], 
+                fontSize: int = 24) -> pygame.Rect:
+    """
+    Create and draw a button with text.
+    
+    Args:
+        screen: Pygame surface to draw on
+        text: Text to display on the button
+        x: X coordinate of the button
+        y: Y coordinate of the button
+        width: Width of the button
+        height: Height of the button
+        color: RGB color tuple for the button background
+        textColor: RGB color tuple for the text
+        fontSize: Font size for the text
+        
+    Returns:
+        A pygame Rect representing the button's area
+    """
+    # Create button rectangle
+    buttonRect = pygame.Rect(x, y, width, height)
+    
+    # Draw button
+    pygame.draw.rect(screen, color, buttonRect, border_radius=5)
+    pygame.draw.rect(screen, tuple(max(c - 40, 0) for c in color), buttonRect, width=2, border_radius=5)
+    
+    # Create font and render text
+    font = pygame.font.Font(None, fontSize)
+    textSurface = font.render(text, True, textColor)
+    
+    # Center text on button
+    textRect = textSurface.get_rect(center=buttonRect.center)
+    
+    # Draw text
+    screen.blit(textSurface, textRect)
+    
+    return buttonRect 
