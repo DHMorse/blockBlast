@@ -13,6 +13,9 @@ def main() -> None:
     # Initialize pygame
     pygame.init()
     
+    # Initialize the mixer with good audio quality
+    pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=2048)
+    
     # Create and run the game
     game = BlockBlastGame()
     game.run()

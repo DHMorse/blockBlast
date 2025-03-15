@@ -14,6 +14,7 @@ from blockblast.utils.constants import (
 from blockblast.utils.score import loadHighScore, saveHighScore
 from blockblast.game.blocks import generateRandomBlocks
 from blockblast.ui.components import createCrownIcon, drawBlock
+from blockblast.utils.audio import MusicPlayer
 
 class BlockBlastGame:
     """
@@ -41,6 +42,11 @@ class BlockBlastGame:
         
         # Create crown icon
         self.crownIcon = createCrownIcon(30, 30)
+        
+        # Initialize music player
+        self.musicPlayer = MusicPlayer()
+        # Start playing music
+        self.musicPlayer.start()
     
     def initGame(self) -> None:
         """
@@ -439,7 +445,12 @@ class BlockBlastGame:
             False if the game should quit, True otherwise
         """
         for event in pygame.event.get():
+            # Handle music events
+            self.musicPlayer.handleEvent(event)
+            
             if event.type == pygame.QUIT:
+                # Stop music before quitting
+                self.musicPlayer.stop()
                 return False
             
             elif event.type == pygame.MOUSEBUTTONDOWN:
