@@ -1,13 +1,74 @@
 """
 Audio management for BlockBlast.
 
-Handles playing random music from the user's music folder.
+Handles playing random music from the user's music folder and sound effects.
 """
 import os
 import random
 import pygame
-from typing import List, Optional, Callable
+from typing import List, Optional, Callable, Dict
 from pathlib import Path
+
+class SoundEffects:
+    """
+    Manages sound effects for the game.
+    Loads and plays sound effects from the assets directory.
+    """
+    
+    def __init__(self) -> None:
+        """
+        Initialize the sound effects manager.
+        Loads all sound effects from the assets/sounds directory.
+        """
+        self.sounds: Dict[str, pygame.mixer.Sound] = {}
+        self.soundsDir: str = self._getSoundsDirectory()
+        self._loadSoundEffects()
+    
+    def _getSoundsDirectory(self) -> str:
+        """
+        Get the path to the sounds directory.
+        
+        Returns:
+            Path to the sounds directory
+        """
+        # Get the directory where the game is installed
+        baseDir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        return os.path.join(baseDir, "blockblast", "assets", "sounds")
+    
+    def _loadSoundEffects(self) -> None:
+        """
+        Load all sound effects from the sounds directory.
+        """
+        if not os.path.exists(self.soundsDir):
+            os.makedirs(self.soundsDir, exist_ok=True)
+            print(f"Created sounds directory: {self.soundsDir}")
+            return
+            
+        supportedExtensions = ['.mp3', '.ogg', '.wav']
+        
+        for file in os.listdir(self.soundsDir):
+            if any(file.lower().endswith(ext) for ext in supportedExtensions):
+                soundPath = os.path.join(self.soundsDir, file)
+                soundName = os.path.splitext(file)[0]
+                try:
+                    self.sounds[soundName] = pygame.mixer.Sound(soundPath)
+                    print(f"Loaded sound effect: {soundName}")
+                except pygame.error as e:
+                    print(f"Error loading sound effect {soundName}: {e}")
+    
+    def play(self, soundName: str, volume: float = 1.0) -> None:
+        """
+        Play a sound effect by name.
+        
+        Args:
+            soundName: Name of the sound effect to play (filename without extension)
+            volume: Volume level (0.0 to 1.0)
+        """
+        if soundName in self.sounds:
+            self.sounds[soundName].set_volume(volume)
+            self.sounds[soundName].play()
+        else:
+            print(f"Sound effect not found: {soundName}")
 
 class MusicPlayer:
     """

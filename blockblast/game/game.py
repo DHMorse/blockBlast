@@ -14,7 +14,7 @@ from blockblast.utils.constants import (
 from blockblast.utils.score import loadHighScore, saveHighScore
 from blockblast.game.blocks import generateRandomBlocks
 from blockblast.ui.components import createCrownIcon, drawBlock
-from blockblast.utils.audio import MusicPlayer
+from blockblast.utils.audio import MusicPlayer, SoundEffects
 
 class BlockBlastGame:
     """
@@ -47,6 +47,9 @@ class BlockBlastGame:
         self.musicPlayer = MusicPlayer()
         # Start playing music
         self.musicPlayer.start()
+        
+        # Initialize sound effects
+        self.soundEffects = SoundEffects()
     
     def initGame(self) -> None:
         """
@@ -424,6 +427,10 @@ class BlockBlastGame:
         for col in range(GRID_SIZE):
             if all(self.grid[row][col] is not None for row in range(GRID_SIZE)):
                 colsToRemove.append(col)
+        
+        # Play sound effect if any lines were cleared
+        if rowsToRemove or colsToRemove:
+            self.soundEffects.play("lineclear")
         
         # Clear completed rows
         for row in rowsToRemove:
