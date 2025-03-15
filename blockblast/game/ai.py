@@ -37,6 +37,8 @@ class TranspositionTable:
         self.table: Dict[str, Tuple[int, int, Optional[int], Optional[Tuple[int, int]]]] = {}
         self.hits: int = 0
         self.stores: int = 0
+        # Cache for hash keys to avoid recomputing them
+        self.hashCache: Dict[str, str] = {}
     
     def getHash(self, grid: List[List[Optional[str]]], availableBlocks: List[Dict[str, Any]], 
                 usedBlocks: List[bool]) -> str:
@@ -51,19 +53,33 @@ class TranspositionTable:
         Returns:
             A string hash representing the game state
         """
-        # Convert grid to a string representation
-        gridStr = json.dumps(grid)
+        # Create a cache key based on grid state and used blocks
+        cacheKey = str(sum(1 for row in grid for cell in row if cell is not None)) + "_" + "".join(str(int(b)) for b in usedBlocks)
+        
+        if cacheKey in self.hashCache:
+            return self.hashCache[cacheKey]
+            
+        # Convert grid to a string representation - optimize by only including non-empty cells
+        gridStr = ""
+        for r, row in enumerate(grid):
+            for c, cell in enumerate(row):
+                if cell is not None:
+                    gridStr += f"{r},{c},{cell}|"
         
         # Convert available blocks to a string representation
         # We only care about the shape and which blocks are used
         blocksStr = ""
         for i, block in enumerate(availableBlocks):
             if not usedBlocks[i]:
-                blocksStr += json.dumps(block["shape"])
+                blocksStr += str(i)
         
         # Combine and hash
         stateStr = gridStr + blocksStr
-        return hashlib.md5(stateStr.encode()).hexdigest()
+        hashValue = hashlib.md5(stateStr.encode()).hexdigest()
+        
+        # Store in cache
+        self.hashCache[cacheKey] = hashValue
+        return hashValue
     
     def lookup(self, grid: List[List[Optional[str]]], availableBlocks: List[Dict[str, Any]], usedBlocks: List[bool], 
                depth: int, alpha: int, beta: int) -> Optional[MinimaxResult]:
@@ -123,7 +139,7 @@ class BlockBlastAI:
         """
         self.transpositionTable = TranspositionTable()
         self.nodesExplored: int = 0
-        self.maxDepth: int = 10  # Maximum search depth
+        self.maxDepth: int = 10  # Reduced maximum search depth for better performance
         self.progressUpdateInterval: int = 1000  # Print progress every 1000 nodes
         self.startTime: float = 0
         self.totalMoves: int = 0
@@ -136,6 +152,16 @@ class BlockBlastAI:
         self.searchResult: Optional[Tuple[Optional[int], Optional[Tuple[int, int]]]] = None
         self.onSearchComplete: Optional[Callable[[Optional[int], Optional[Tuple[int, int]]], None]] = None
         self.shouldCancelSearch: bool = False  # Flag to signal search cancellation
+        
+        # Precompute valid positions for each block shape to avoid redundant calculations
+        self.validPositionsCache: Dict[str, List[Tuple[int, int]]] = {}
+        
+        # Cache for evaluation scores
+        self.evaluationCache: Dict[str, int] = {}
+        
+        # For iterative deepening
+        self.currentSearchDepth: int = 2
+        self.bestMoveSoFar: Optional[Tuple[int, Tuple[int, int], int]] = None
     
     def findBestMoveThreaded(self, game: Any, callback: Callable[[Optional[int], Optional[Tuple[int, int]]], None]) -> None:
         """
@@ -183,24 +209,41 @@ class BlockBlastAI:
             self.depthDistribution = {d: 0 for d in range(self.maxDepth + 1)}
             self.topMoves = []
             self.shouldCancelSearch = False
+            self.evaluationCache = {}
+            self.bestMoveSoFar = None
             
             # Calculate total possible moves for progress tracking
             self.totalMoves = self.countPossibleMoves(grid, availableBlocks, usedBlocks)
             self.currentMoveIndex = 0
             
-            # Start the minimax search
-            result = self.minimax(
-                grid,
-                availableBlocks,
-                usedBlocks,
-                0,
-                float('-inf'),
-                float('inf')
-            )
+            # Use iterative deepening to get faster initial results
+            for depth in range(2, self.maxDepth + 1, 2):
+                if self.shouldCancelSearch:
+                    break
+                    
+                self.currentSearchDepth = depth
+                
+                # Start the minimax search with current depth limit
+                result = self.minimax(
+                    grid,
+                    availableBlocks,
+                    usedBlocks,
+                    0,
+                    float('-inf'),
+                    float('inf'),
+                    depth
+                )
+                
+                if result.blockIndex is not None and result.position is not None:
+                    self.bestMoveSoFar = (result.blockIndex, result.position, result.score)
+                    self.searchResult = (result.blockIndex, result.position)
+                    
+                    # Add to top moves
+                    if (result.blockIndex, result.position, result.score) not in self.topMoves:
+                        self.topMoves.append((result.blockIndex, result.position, result.score))
             
-            if result.blockIndex is not None and result.position is not None:
-                self.searchResult = (result.blockIndex, result.position)
-            else:
+            # If no result was found or search was cancelled
+            if self.bestMoveSoFar is None:
                 self.searchResult = (None, None)
                 
             # Call the callback with the result
@@ -328,7 +371,8 @@ class BlockBlastAI:
         return totalMoves
     
     def minimax(self, grid: List[List[Optional[str]]], availableBlocks: List[Dict[str, Any]], 
-               usedBlocks: List[bool], depth: int, alpha: float, beta: float) -> MinimaxResult:
+               usedBlocks: List[bool], depth: int, alpha: float, beta: float, 
+               depthLimit: Optional[int] = None) -> MinimaxResult:
         """
         Minimax algorithm with alpha-beta pruning.
         
@@ -339,10 +383,14 @@ class BlockBlastAI:
             depth: Current search depth
             alpha: Alpha value for alpha-beta pruning
             beta: Beta value for alpha-beta pruning
+            depthLimit: Optional depth limit for iterative deepening
             
         Returns:
             MinimaxResult containing the best score, block index, and position
         """
+        # Use provided depth limit or default max depth
+        maxDepthForSearch = depthLimit if depthLimit is not None else self.maxDepth
+        
         # Check if search should be cancelled
         if self.shouldCancelSearch:
             return MinimaxResult(0, None, None)
@@ -358,7 +406,7 @@ class BlockBlastAI:
             return ttResult
         
         # Check if we've reached the maximum depth or if the game is over
-        if depth >= self.maxDepth or self.isGameOver(availableBlocks, usedBlocks, grid):
+        if depth >= maxDepthForSearch or self.isGameOver(availableBlocks, usedBlocks, grid):
             score = self.evaluatePosition(grid, availableBlocks, usedBlocks)
             result = MinimaxResult(score, None, None)
             self.transpositionTable.store(grid, availableBlocks, usedBlocks, depth, score, None, None)
@@ -377,65 +425,66 @@ class BlockBlastAI:
             block = availableBlocks[blockIndex]
             shape = block["shape"]
             
-            # Try each possible position on the grid
-            for row in range(GRID_SIZE - len(shape) + 1):
-                for col in range(GRID_SIZE - len(shape[0]) + 1):
-                    # Check if the block can be placed at this position
-                    if self.canPlaceBlockAtPosition(grid, shape, row, col):
-                        # Update progress for top-level search
+            # Get valid positions for this shape (using cache if available)
+            shapeKey = self._getShapeKey(shape)
+            if shapeKey not in self.validPositionsCache:
+                self.validPositionsCache[shapeKey] = self._findValidPositions(grid, shape)
+            
+            validPositions = self.validPositionsCache[shapeKey]
+            
+            # Try each valid position
+            for row, col in validPositions:
+                # Check if the block can be placed at this position
+                if self.canPlaceBlockAtPosition(grid, shape, row, col):
+                    # Update progress for top-level search
+                    if depth == 0:
+                        self.currentMoveIndex += 1
+                    
+                    # Make the move (avoid deep copy when possible)
+                    newGrid = self._placeBlockAndGetNewGrid(grid, shape, block["colorName"], row, col)
+                    newUsedBlocks = usedBlocks.copy()  # Shallow copy is sufficient
+                    newUsedBlocks[blockIndex] = True
+                    
+                    # Check for completed lines and update the grid
+                    linesCleared = self.clearCompletedLines(newGrid)
+                    
+                    # If all blocks have been used, reset used blocks
+                    if all(newUsedBlocks):
+                        newUsedBlocks = [False] * MAX_AVAILABLE_BLOCKS
+                    
+                    # Recursive minimax call
+                    moveScore = self.minimax(
+                        newGrid, 
+                        availableBlocks,  # No need to copy, we don't modify this
+                        newUsedBlocks, 
+                        depth + 1, 
+                        alpha, 
+                        beta,
+                        depthLimit
+                    ).score
+                    
+                    # Add immediate score from placing the block and clearing lines
+                    immediateScore = 10 + linesCleared * 100  # 10 for placing block, 100 per line cleared
+                    moveScore += immediateScore
+                    
+                    # Update best move
+                    if moveScore > bestScore:
+                        bestScore = moveScore
+                        bestBlockIndex = blockIndex
+                        bestPosition = (row, col)
+                        
+                        # Track top moves at depth 0
                         if depth == 0:
-                            self.currentMoveIndex += 1
-                        
-                        # Make the move
-                        newGrid = copy.deepcopy(grid)
-                        newUsedBlocks = copy.deepcopy(usedBlocks)
-                        
-                        # Place the block
-                        self.placeBlock(newGrid, shape, block["colorName"], row, col)
-                        newUsedBlocks[blockIndex] = True
-                        
-                        # Check for completed lines and update the grid
-                        linesCleared = self.clearCompletedLines(newGrid)
-                        
-                        # If all blocks have been used, generate new blocks
-                        newAvailableBlocks = copy.deepcopy(availableBlocks)
-                        if all(newUsedBlocks):
-                            # In a real game, we would generate new random blocks here
-                            # For the AI, we'll just reset the used blocks
-                            newUsedBlocks = [False] * MAX_AVAILABLE_BLOCKS
-                        
-                        # Recursive minimax call
-                        moveScore = self.minimax(
-                            newGrid, 
-                            newAvailableBlocks, 
-                            newUsedBlocks, 
-                            depth + 1, 
-                            alpha, 
-                            beta
-                        ).score
-                        
-                        # Add immediate score from placing the block and clearing lines
-                        immediateScore = 10 + linesCleared * 100  # 10 for placing block, 100 per line cleared
-                        moveScore += immediateScore
-                        
-                        # Update best move
-                        if moveScore > bestScore:
-                            bestScore = moveScore
-                            bestBlockIndex = blockIndex
-                            bestPosition = (row, col)
-                            
-                            # Track top moves at depth 0
-                            if depth == 0:
-                                self.topMoves.append((blockIndex, (row, col), moveScore))
-                        
-                        # Alpha-beta pruning
-                        alpha = max(alpha, bestScore)
-                        if beta <= alpha:
-                            # Store the result in the transposition table before pruning
-                            self.transpositionTable.store(
-                                grid, availableBlocks, usedBlocks, depth, bestScore, bestBlockIndex, bestPosition
-                            )
-                            return MinimaxResult(bestScore, bestBlockIndex, bestPosition)
+                            self.topMoves.append((blockIndex, (row, col), moveScore))
+                    
+                    # Alpha-beta pruning
+                    alpha = max(alpha, bestScore)
+                    if beta <= alpha:
+                        # Store the result in the transposition table before pruning
+                        self.transpositionTable.store(
+                            grid, availableBlocks, usedBlocks, depth, bestScore, bestBlockIndex, bestPosition
+                        )
+                        return MinimaxResult(bestScore, bestBlockIndex, bestPosition)
         
         # If no valid moves were found
         if bestBlockIndex is None:
@@ -445,6 +494,61 @@ class BlockBlastAI:
         self.transpositionTable.store(grid, availableBlocks, usedBlocks, depth, bestScore, bestBlockIndex, bestPosition)
         
         return MinimaxResult(bestScore, bestBlockIndex, bestPosition)
+    
+    def _getShapeKey(self, shape: List[List[int]]) -> str:
+        """
+        Generate a string key for a block shape.
+        
+        Args:
+            shape: The block shape
+            
+        Returns:
+            A string key representing the shape
+        """
+        return "".join("".join(str(cell) for cell in row) for row in shape)
+    
+    def _findValidPositions(self, grid: List[List[Optional[str]]], shape: List[List[int]]) -> List[Tuple[int, int]]:
+        """
+        Find all valid positions for a block shape on the grid.
+        
+        Args:
+            grid: The game grid
+            shape: The block shape
+            
+        Returns:
+            List of valid (row, col) positions
+        """
+        validPositions = []
+        for row in range(GRID_SIZE - len(shape) + 1):
+            for col in range(GRID_SIZE - len(shape[0]) + 1):
+                validPositions.append((row, col))
+        return validPositions
+    
+    def _placeBlockAndGetNewGrid(self, grid: List[List[Optional[str]]], shape: List[List[int]], 
+                               colorName: str, row: int, col: int) -> List[List[Optional[str]]]:
+        """
+        Place a block on a copy of the grid and return the new grid.
+        
+        Args:
+            grid: The original game grid
+            shape: The shape of the block
+            colorName: The color name of the block
+            row: Grid row
+            col: Grid column
+            
+        Returns:
+            A new grid with the block placed
+        """
+        # Create a new grid (more efficient than deep copy)
+        newGrid = [row.copy() for row in grid]
+        
+        # Place the block
+        for r in range(len(shape)):
+            for c in range(len(shape[0])):
+                if shape[r][c]:
+                    newGrid[row + r][col + c] = colorName
+        
+        return newGrid
     
     def canPlaceBlockAtPosition(self, grid: List[List[Optional[str]]], shape: List[List[int]], 
                                row: int, col: int) -> bool:
@@ -563,6 +667,11 @@ class BlockBlastAI:
         Returns:
             A score representing the quality of the position
         """
+        # Check cache first
+        cacheKey = self.transpositionTable.getHash(grid, availableBlocks, usedBlocks)
+        if cacheKey in self.evaluationCache:
+            return self.evaluationCache[cacheKey]
+        
         # Count empty cells - fewer empty cells is better
         emptyCells = sum(1 for row in grid for cell in row if cell is None)
         
@@ -581,17 +690,21 @@ class BlockBlastAI:
             if GRID_SIZE - 2 <= filledCells < GRID_SIZE:
                 almostCompleteLines += 1
         
-        # Count available moves
+        # Count available moves (use cached valid positions)
         availableMoves = 0
         for blockIndex in range(len(availableBlocks)):
             if not usedBlocks[blockIndex]:
                 block = availableBlocks[blockIndex]
                 shape = block["shape"]
                 
-                for row in range(GRID_SIZE - len(shape) + 1):
-                    for col in range(GRID_SIZE - len(shape[0]) + 1):
-                        if self.canPlaceBlockAtPosition(grid, shape, row, col):
-                            availableMoves += 1
+                # Get valid positions for this shape
+                shapeKey = self._getShapeKey(shape)
+                if shapeKey not in self.validPositionsCache:
+                    self.validPositionsCache[shapeKey] = self._findValidPositions(grid, shape)
+                
+                for row, col in self.validPositionsCache[shapeKey]:
+                    if self.canPlaceBlockAtPosition(grid, shape, row, col):
+                        availableMoves += 1
         
         # Calculate score: prefer fewer empty cells, more almost complete lines, and more available moves
         score = (
@@ -599,6 +712,9 @@ class BlockBlastAI:
             almostCompleteLines * 50 +  # Almost complete lines are valuable
             availableMoves * 10  # Having more available moves is good
         )
+        
+        # Cache the result
+        self.evaluationCache[cacheKey] = score
         
         return score
     
@@ -653,7 +769,8 @@ class BlockBlastAI:
             'nodesExplored': self.nodesExplored,
             'elapsedTime': time.time() - self.startTime if hasattr(self, 'startTime') else 0,
             'progress': progress,
-            'bestMove': max(self.topMoves, key=lambda x: x[2]) if hasattr(self, 'topMoves') and self.topMoves else None
+            'bestMove': max(self.topMoves, key=lambda x: x[2]) if hasattr(self, 'topMoves') and self.topMoves else None,
+            'currentDepth': self.currentSearchDepth if hasattr(self, 'currentSearchDepth') else 0
         }
 
     def cancelSearch(self) -> None:
