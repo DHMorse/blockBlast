@@ -43,8 +43,8 @@ class BlockBlastGame:
     # Game dimensions
     SCREEN_WIDTH: int = 400
     SCREEN_HEIGHT: int = 700
-    GRID_SIZE: int = 10
-    CELL_SIZE: int = 35
+    GRID_SIZE: int = 8
+    CELL_SIZE: int = 40
     GRID_PADDING: int = 40
     
     # Number of blocks available at a time
@@ -127,7 +127,7 @@ class BlockBlastGame:
 
             [[1, 1, 1]],
 
-            [[1, 1, 1, 1]],
+            [[1, 1, 1, 1 , 1]],
 
             [[1], [1], [1], [1]],
             
@@ -763,4 +763,5 @@ class BlockBlastGame:
 
 if __name__ == "__main__":
     game = BlockBlastGame()
-    game.run() 
+    game.run()    
+    print    ('fag')
