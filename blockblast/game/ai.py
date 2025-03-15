@@ -1,9 +1,10 @@
 """
 AI implementation for BlockBlast game using minimax algorithm with alpha-beta pruning.
 """
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Tuple, Optional, Any, Callable
 import copy
 import time
+import threading
 from dataclasses import dataclass
 import hashlib
 import json
@@ -128,10 +129,116 @@ class BlockBlastAI:
         self.totalMoves: int = 0
         self.currentMoveIndex: int = 0
         self.depthDistribution: Dict[int, int] = {}  # Track nodes explored at each depth
+        
+        # Thread-related attributes
+        self.searchThread: Optional[threading.Thread] = None
+        self.isSearching: bool = False
+        self.searchResult: Optional[Tuple[Optional[int], Optional[Tuple[int, int]]]] = None
+        self.onSearchComplete: Optional[Callable[[Optional[int], Optional[Tuple[int, int]]], None]] = None
+        self.shouldCancelSearch: bool = False  # Flag to signal search cancellation
+    
+    def findBestMoveThreaded(self, game: Any, callback: Callable[[Optional[int], Optional[Tuple[int, int]]], None]) -> None:
+        """
+        Start a new thread to find the best move for the current game state.
+        
+        Args:
+            game: The BlockBlastGame instance
+            callback: Function to call when search is complete with (blockIndex, position) as arguments
+        """
+        if self.isSearching:
+            print("AI is already searching for a move")
+            return
+        
+        self.isSearching = True
+        self.onSearchComplete = callback
+        
+        # Create a deep copy of the game state to avoid thread safety issues
+        gridCopy = copy.deepcopy(game.grid)
+        availableBlocksCopy = copy.deepcopy(game.availableBlocks)
+        usedBlocksCopy = copy.deepcopy(game.usedBlocks)
+        
+        # Start a new thread for the search
+        self.searchThread = threading.Thread(
+            target=self._threadedSearch,
+            args=(gridCopy, availableBlocksCopy, usedBlocksCopy),
+            daemon=True  # Make thread a daemon so it exits when the main program exits
+        )
+        self.searchThread.start()
+    
+    def _threadedSearch(self, grid: List[List[Optional[str]]], availableBlocks: List[Dict[str, Any]], 
+                       usedBlocks: List[bool]) -> None:
+        """
+        Run the minimax search in a separate thread.
+        
+        Args:
+            grid: Copy of the game grid
+            availableBlocks: Copy of the available blocks
+            usedBlocks: Copy of the used blocks
+        """
+        try:
+            # Reset statistics
+            self.transpositionTable = TranspositionTable()
+            self.nodesExplored = 0
+            self.startTime = time.time()
+            self.depthDistribution = {d: 0 for d in range(self.maxDepth + 1)}
+            self.topMoves = []
+            self.shouldCancelSearch = False
+            
+            # Calculate total possible moves for progress tracking
+            self.totalMoves = self.countPossibleMoves(grid, availableBlocks, usedBlocks)
+            self.currentMoveIndex = 0
+            
+            print(f"Starting AI search with {self.totalMoves} possible moves to evaluate")
+            print(f"Search depth: {self.maxDepth}")
+            
+            # Start the minimax search
+            result = self.minimax(
+                grid,
+                availableBlocks,
+                usedBlocks,
+                0,
+                float('-inf'),
+                float('inf')
+            )
+            
+            endTime = time.time()
+            
+            # Print statistics
+            print(f"AI search completed in {endTime - self.startTime:.2f} seconds")
+            print(f"Nodes explored: {self.nodesExplored}")
+            print(f"Transposition table hits: {self.transpositionTable.hits}")
+            print(f"Transposition table stores: {self.transpositionTable.stores}")
+            
+            # Print depth distribution
+            self.printDepthDistribution()
+            
+            # Print top moves
+            self.printTopMoves()
+            
+            if result.blockIndex is not None and result.position is not None:
+                print(f"Best move: Block {result.blockIndex} at position {result.position} with score {result.score}")
+                self.searchResult = (result.blockIndex, result.position)
+            else:
+                print("No valid moves found")
+                self.searchResult = (None, None)
+                
+            # Call the callback with the result
+            if self.onSearchComplete and not self.shouldCancelSearch:
+                self.onSearchComplete(*self.searchResult)
+        
+        except Exception as e:
+            print(f"Error in AI search thread: {e}")
+            self.searchResult = (None, None)
+            if self.onSearchComplete and not self.shouldCancelSearch:
+                self.onSearchComplete(None, None)
+        
+        finally:
+            self.isSearching = False
     
     def findBestMove(self, game: Any) -> Tuple[Optional[int], Optional[Tuple[int, int]]]:
         """
         Find the best move for the current game state using minimax with alpha-beta pruning.
+        This is the synchronous version of the search.
         
         Args:
             game: The BlockBlastGame instance
@@ -185,6 +292,15 @@ class BlockBlastAI:
         else:
             print("No valid moves found")
             return None, None
+    
+    def isSearchInProgress(self) -> bool:
+        """
+        Check if a search is currently in progress.
+        
+        Returns:
+            True if a search is in progress, False otherwise
+        """
+        return self.isSearching
     
     def printDepthDistribution(self) -> None:
         """
@@ -247,6 +363,10 @@ class BlockBlastAI:
         Returns:
             MinimaxResult containing the best score, block index, and position
         """
+        # Check if search should be cancelled
+        if self.shouldCancelSearch:
+            return MinimaxResult(0, None, None)
+            
         self.nodesExplored += 1
         
         # Track depth distribution
@@ -554,4 +674,42 @@ class BlockBlastAI:
             print("          |")
             print("          └─ Recursive search for next best move")
             print("              |")
-            print("              └─ ... (search continues to depth limit)") 
+            print("              └─ ... (search continues to depth limit)")
+
+    def getSearchProgress(self) -> Dict[str, Any]:
+        """
+        Get the current search progress information.
+        
+        Returns:
+            A dictionary containing search progress information
+        """
+        progress = 0.0
+        if hasattr(self, 'totalMoves') and self.totalMoves > 0:
+            progress = min(1.0, self.currentMoveIndex / self.totalMoves)
+            
+        return {
+            'nodesExplored': self.nodesExplored,
+            'elapsedTime': time.time() - self.startTime if hasattr(self, 'startTime') else 0,
+            'progress': progress,
+            'totalMoves': self.totalMoves if hasattr(self, 'totalMoves') else 0,
+            'currentMoveIndex': self.currentMoveIndex if hasattr(self, 'currentMoveIndex') else 0,
+            'transpositionTableHits': self.transpositionTable.hits if hasattr(self, 'transpositionTable') else 0,
+            'bestMove': max(self.topMoves, key=lambda x: x[2]) if hasattr(self, 'topMoves') and self.topMoves else None
+        } 
+
+    def cancelSearch(self) -> None:
+        """
+        Cancel an ongoing search.
+        """
+        if self.isSearching:
+            print("Cancelling AI search...")
+            self.shouldCancelSearch = True
+            
+            # Wait for the search thread to finish (with a timeout)
+            if self.searchThread and self.searchThread.is_alive():
+                self.searchThread.join(timeout=0.5)
+                
+            self.isSearching = False
+            print("AI search cancelled")
+        else:
+            print("No AI search in progress to cancel") 

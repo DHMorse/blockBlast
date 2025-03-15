@@ -52,12 +52,22 @@ class BlockBlastGame:
         
         # AI button properties
         self.aiButtonRect: Optional[pygame.Rect] = None
+        self.aiCancelButtonRect: Optional[pygame.Rect] = None
         
         # Initialize AI
         self.ai = BlockBlastAI()
         self.aiActive: bool = False
         self.aiMoveDelay: float = 0.5  # Delay between AI moves in seconds
         self.lastAiMoveTime: float = 0
+        self.aiThinking: bool = False  # Flag to indicate if AI is currently thinking
+        self.aiThinkingDots: int = 0  # For animated thinking indicator
+        self.aiThinkingTimer: float = 0  # For animated thinking indicator
+        
+        # AI progress indicators
+        self.aiProgress: float = 0.0  # Progress from 0.0 to 1.0
+        self.aiNodesExplored: int = 0
+        self.aiStartTime: float = 0
+        self.aiStatusMessage: str = ""
     
     def initGame(self) -> None:
         """
@@ -356,9 +366,20 @@ class BlockBlastGame:
         buttonX = (SCREEN_WIDTH - buttonWidth) // 2
         buttonY = 20
         
-        # Choose button color based on AI state
-        buttonColor = (0, 200, 0) if self.aiActive else (128, 0, 255)  # Green when active, Purple when inactive
-        buttonText = "AI ON" if self.aiActive else "AI"
+        # Choose button color and text based on AI state
+        if self.aiThinking:
+            # Show thinking animation with dots
+            currentTime = time.time()
+            if currentTime - self.aiThinkingTimer > 0.5:  # Update dots every 0.5 seconds
+                self.aiThinkingDots = (self.aiThinkingDots + 1) % 4
+                self.aiThinkingTimer = currentTime
+                
+            dots = "." * self.aiThinkingDots
+            buttonText = f"AI{dots}"
+            buttonColor = (255, 165, 0)  # Orange when thinking
+        else:
+            buttonText = "AI ON" if self.aiActive else "AI"
+            buttonColor = (0, 200, 0) if self.aiActive else (128, 0, 255)  # Green when active, Purple when inactive
         
         # Create the AI button
         self.aiButtonRect = createButton(
@@ -372,6 +393,60 @@ class BlockBlastGame:
             WHITE,
             36
         )
+        
+        # Draw thinking indicator and progress bar if AI is thinking
+        if self.aiThinking:
+            # Draw "Thinking..." text
+            thinkingText = self.tinyFont.render("Thinking...", True, WHITE)
+            self.screen.blit(thinkingText, (buttonX + buttonWidth // 2 - thinkingText.get_width() // 2, buttonY + buttonHeight + 5))
+            
+            # Draw progress bar
+            progressBarWidth = 200
+            progressBarHeight = 10
+            progressBarX = (SCREEN_WIDTH - progressBarWidth) // 2
+            progressBarY = buttonY + buttonHeight + 25
+            
+            # Draw background
+            pygame.draw.rect(self.screen, (50, 50, 50), (progressBarX, progressBarY, progressBarWidth, progressBarHeight))
+            
+            # Draw progress
+            filledWidth = int(progressBarWidth * self.aiProgress)
+            if filledWidth > 0:
+                pygame.draw.rect(self.screen, (0, 200, 0), (progressBarX, progressBarY, filledWidth, progressBarHeight))
+            
+            # Draw progress text
+            if self.aiNodesExplored > 0:
+                elapsedTime = time.time() - self.aiStartTime
+                nodesPerSecond = self.aiNodesExplored / elapsedTime if elapsedTime > 0 else 0
+                progressText = self.tinyFont.render(
+                    f"Nodes: {self.aiNodesExplored:,} ({nodesPerSecond:.0f}/s)", 
+                    True, 
+                    WHITE
+                )
+                self.screen.blit(progressText, (progressBarX, progressBarY + progressBarHeight + 5))
+            
+            # Draw status message if available
+            if self.aiStatusMessage:
+                statusText = self.tinyFont.render(self.aiStatusMessage, True, WHITE)
+                self.screen.blit(statusText, (progressBarX, progressBarY + progressBarHeight + 25))
+            
+            # Draw cancel button
+            cancelButtonWidth = 80
+            cancelButtonHeight = 30
+            cancelButtonX = (SCREEN_WIDTH - cancelButtonWidth) // 2
+            cancelButtonY = progressBarY + progressBarHeight + 50
+            
+            self.aiCancelButtonRect = createButton(
+                self.screen,
+                "Cancel",
+                cancelButtonX,
+                cancelButtonY,
+                cancelButtonWidth,
+                cancelButtonHeight,
+                (200, 50, 50),  # Red color
+                WHITE,
+                20
+            )
     
     def getGridCoordinates(self) -> Tuple[int, int]:
         """
@@ -489,12 +564,24 @@ class BlockBlastGame:
                     
                     # Check if AI button was clicked
                     if self.aiButtonRect and self.aiButtonRect.collidepoint(mousePos):
-                        print("AI button pressed!")
-                        self.aiActive = not self.aiActive
-                        if self.aiActive:
-                            print("AI is now playing the game")
-                        else:
-                            print("AI is now disabled")
+                        # Don't toggle AI if it's currently thinking
+                        if not self.aiThinking:
+                            print("AI button pressed!")
+                            self.aiActive = not self.aiActive
+                            if self.aiActive:
+                                print("AI is now playing the game")
+                                # Trigger the first AI move immediately
+                                self.lastAiMoveTime = 0
+                            else:
+                                print("AI is now disabled")
+                        return True
+                    
+                    # Check if cancel button was clicked during AI thinking
+                    if self.aiThinking and self.aiCancelButtonRect and self.aiCancelButtonRect.collidepoint(mousePos):
+                        print("AI search cancelled by user")
+                        self.ai.cancelSearch()  # Cancel the search in the AI
+                        self.aiThinking = False
+                        self.aiActive = False
                         return True
                     
                     # Handle game over state
@@ -558,29 +645,18 @@ class BlockBlastGame:
         
         return True
     
-    def makeAiMove(self) -> None:
+    def onAiMoveComplete(self, blockIndex: Optional[int], position: Optional[Tuple[int, int]]) -> None:
         """
-        Make a move using the AI.
+        Callback function for when the AI completes its search.
+        
+        Args:
+            blockIndex: The index of the block to place
+            position: The position (row, col) to place the block
         """
-        if self.gameState != STATE_PLAYING or not self.aiActive:
+        # If AI was cancelled, don't process the result
+        if not self.aiThinking:
             return
-        
-        # Check if enough time has passed since the last AI move
-        currentTime = time.time()
-        if currentTime - self.lastAiMoveTime < self.aiMoveDelay:
-            return
-        
-        print("\n" + "="*50)
-        print("AI TURN")
-        print("="*50)
-        print(f"Current score: {self.score}")
-        print(f"Grid state: {sum(1 for row in self.grid for cell in row if cell is not None)}/{GRID_SIZE*GRID_SIZE} cells filled")
-        print(f"Available blocks: {MAX_AVAILABLE_BLOCKS - sum(self.usedBlocks)}/{MAX_AVAILABLE_BLOCKS}")
-        print("Starting minimax search...")
-        
-        # Find the best move
-        blockIndex, position = self.ai.findBestMove(self)
-        
+            
         if blockIndex is not None and position is not None:
             row, col = position
             print(f"AI DECISION: Placing block {blockIndex} at position ({row}, {col})")
@@ -595,14 +671,64 @@ class BlockBlastGame:
                 print(f"Move executed. New score: {self.score}")
             else:
                 print("WARNING: AI selected an invalid move! This shouldn't happen.")
-            
-            # Update the last AI move time
-            self.lastAiMoveTime = currentTime
         else:
             print("AI could not find a valid move. AI disabled.")
             self.aiActive = False
         
+        # Update AI state
+        self.aiThinking = False
+        self.lastAiMoveTime = time.time()
+        
         print("="*50 + "\n")
+    
+    def makeAiMove(self) -> None:
+        """
+        Make a move using the AI.
+        """
+        if self.gameState != STATE_PLAYING or not self.aiActive:
+            return
+        
+        # If AI is already thinking, don't start a new search
+        if self.aiThinking:
+            # Update progress information from the AI
+            if self.ai.isSearchInProgress():
+                progress = self.ai.getSearchProgress()
+                self.aiNodesExplored = progress['nodesExplored']
+                self.aiProgress = progress['progress']
+                
+                # Update status message with best move if available
+                if progress['bestMove']:
+                    blockIndex, position, score = progress['bestMove']
+                    self.aiStatusMessage = f"Best move so far: Block {blockIndex} at {position} (score: {score})"
+                elif self.aiNodesExplored > 0:
+                    elapsedTime = time.time() - self.aiStartTime
+                    self.aiStatusMessage = f"Searched {self.aiNodesExplored:,} positions in {elapsedTime:.1f}s"
+            return
+        
+        # Check if enough time has passed since the last AI move
+        currentTime = time.time()
+        if currentTime - self.lastAiMoveTime < self.aiMoveDelay:
+            return
+        
+        print("\n" + "="*50)
+        print("AI TURN")
+        print("="*50)
+        print(f"Current score: {self.score}")
+        print(f"Grid state: {sum(1 for row in self.grid for cell in row if cell is not None)}/{GRID_SIZE*GRID_SIZE} cells filled")
+        print(f"Available blocks: {MAX_AVAILABLE_BLOCKS - sum(self.usedBlocks)}/{MAX_AVAILABLE_BLOCKS}")
+        print("Starting minimax search in a separate thread...")
+        
+        # Set AI thinking state
+        self.aiThinking = True
+        self.aiThinkingDots = 0
+        self.aiThinkingTimer = time.time()
+        self.aiProgress = 0.0
+        self.aiNodesExplored = 0
+        self.aiStartTime = time.time()
+        self.aiStatusMessage = "Analyzing possible moves..."
+        
+        # Start the AI search in a separate thread
+        self.ai.findBestMoveThreaded(self, self.onAiMoveComplete)
 
     def run(self) -> None:
         """
