@@ -188,9 +188,6 @@ class BlockBlastAI:
             self.totalMoves = self.countPossibleMoves(grid, availableBlocks, usedBlocks)
             self.currentMoveIndex = 0
             
-            print(f"Starting AI search with {self.totalMoves} possible moves to evaluate")
-            print(f"Search depth: {self.maxDepth}")
-            
             # Start the minimax search
             result = self.minimax(
                 grid,
@@ -201,25 +198,9 @@ class BlockBlastAI:
                 float('inf')
             )
             
-            endTime = time.time()
-            
-            # Print statistics
-            print(f"AI search completed in {endTime - self.startTime:.2f} seconds")
-            print(f"Nodes explored: {self.nodesExplored}")
-            print(f"Transposition table hits: {self.transpositionTable.hits}")
-            print(f"Transposition table stores: {self.transpositionTable.stores}")
-            
-            # Print depth distribution
-            self.printDepthDistribution()
-            
-            # Print top moves
-            self.printTopMoves()
-            
             if result.blockIndex is not None and result.position is not None:
-                print(f"Best move: Block {result.blockIndex} at position {result.position} with score {result.score}")
                 self.searchResult = (result.blockIndex, result.position)
             else:
-                print("No valid moves found")
                 self.searchResult = (None, None)
                 
             # Call the callback with the result
@@ -227,7 +208,6 @@ class BlockBlastAI:
                 self.onSearchComplete(*self.searchResult)
         
         except Exception as e:
-            print(f"Error in AI search thread: {e}")
             self.searchResult = (None, None)
             if self.onSearchComplete and not self.shouldCancelSearch:
                 self.onSearchComplete(None, None)
@@ -372,16 +352,6 @@ class BlockBlastAI:
         # Track depth distribution
         self.depthDistribution[depth] = self.depthDistribution.get(depth, 0) + 1
         
-        # Print progress updates
-        if self.nodesExplored % self.progressUpdateInterval == 0:
-            elapsedTime = time.time() - self.startTime
-            print(f"Search progress: {self.nodesExplored} nodes explored in {elapsedTime:.2f} seconds")
-            print(f"Current depth: {depth}, Transposition table hits: {self.transpositionTable.hits}")
-            
-            # Print current depth distribution every 10,000 nodes
-            if self.nodesExplored % (self.progressUpdateInterval * 10) == 0:
-                self.printDepthDistribution()
-        
         # Check transposition table
         ttResult = self.transpositionTable.lookup(grid, availableBlocks, usedBlocks, depth, alpha, beta)
         if ttResult is not None:
@@ -415,10 +385,6 @@ class BlockBlastAI:
                         # Update progress for top-level search
                         if depth == 0:
                             self.currentMoveIndex += 1
-                            if self.currentMoveIndex % 5 == 0 or self.currentMoveIndex == 1:  # Print every 5 moves or the first move
-                                progress = (self.currentMoveIndex / self.totalMoves) * 100
-                                print(f"Top-level progress: {self.currentMoveIndex}/{self.totalMoves} moves ({progress:.1f}%)")
-                                print(f"Evaluating block {blockIndex} at position ({row}, {col})")
                         
                         # Make the move
                         newGrid = copy.deepcopy(grid)
@@ -458,10 +424,8 @@ class BlockBlastAI:
                             bestBlockIndex = blockIndex
                             bestPosition = (row, col)
                             
-                            # Print when we find a better move at the top level
+                            # Track top moves at depth 0
                             if depth == 0:
-                                print(f"Found better move: Block {blockIndex} at ({row}, {col}) with score {moveScore}")
-                                # Track top moves at depth 0
                                 self.topMoves.append((blockIndex, (row, col), moveScore))
                         
                         # Alpha-beta pruning
@@ -471,8 +435,6 @@ class BlockBlastAI:
                             self.transpositionTable.store(
                                 grid, availableBlocks, usedBlocks, depth, bestScore, bestBlockIndex, bestPosition
                             )
-                            if depth == 0:
-                                print(f"Alpha-beta pruning at depth {depth}")
                             return MinimaxResult(bestScore, bestBlockIndex, bestPosition)
         
         # If no valid moves were found
@@ -691,25 +653,18 @@ class BlockBlastAI:
             'nodesExplored': self.nodesExplored,
             'elapsedTime': time.time() - self.startTime if hasattr(self, 'startTime') else 0,
             'progress': progress,
-            'totalMoves': self.totalMoves if hasattr(self, 'totalMoves') else 0,
-            'currentMoveIndex': self.currentMoveIndex if hasattr(self, 'currentMoveIndex') else 0,
-            'transpositionTableHits': self.transpositionTable.hits if hasattr(self, 'transpositionTable') else 0,
             'bestMove': max(self.topMoves, key=lambda x: x[2]) if hasattr(self, 'topMoves') and self.topMoves else None
-        } 
+        }
 
     def cancelSearch(self) -> None:
         """
         Cancel an ongoing search.
         """
         if self.isSearching:
-            print("Cancelling AI search...")
             self.shouldCancelSearch = True
             
             # Wait for the search thread to finish (with a timeout)
             if self.searchThread and self.searchThread.is_alive():
                 self.searchThread.join(timeout=0.5)
                 
-            self.isSearching = False
-            print("AI search cancelled")
-        else:
-            print("No AI search in progress to cancel") 
+            self.isSearching = False 
