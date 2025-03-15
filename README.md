@@ -8,7 +8,7 @@ Block Blast is a puzzle game where you place different shaped blocks on a grid. 
 
 ## Features
 
-- 10x10 game grid
+- 8x8 game grid
 - 24 different block shapes with various configurations
 - 10 different block colors
 - High score tracking and persistence
@@ -20,11 +20,17 @@ Block Blast is a puzzle game where you place different shaped blocks on a grid. 
 
 ## Installation
 
-1. Make sure you have Python 3.6+ installed
-2. Install the required dependencies:
+1. Make sure you have Python 3.10+ installed
+2. Install the required dependencies using pip:
 
 ```bash
-pip install -r requirements.txt
+pip install pygame>=2.6.1
+```
+
+Or if you're using a modern Python package manager:
+
+```bash
+pip install .
 ```
 
 ## How to Run
@@ -60,7 +66,7 @@ python main.py
 ## Game Elements
 
 - **Top of screen**: Current score and high score with crown icon
-- **Center**: 10x10 game grid where blocks are placed
+- **Center**: 8x8 game grid where blocks are placed
 - **Bottom**: Three available blocks to choose from
 - **Game Over screen**: Final score, high score, and replay button
 
@@ -70,4 +76,6 @@ python main.py
 - Object-oriented design with the BlockBlastGame class
 - High scores saved to a local file (highscore.txt)
 - Semi-transparent block preview with placement validation
-- Responsive UI with visual feedback 
+- Responsive UI with visual feedback
+- Type-annotated code using Python's typing module
+- Requires Python 3.10 or higher 
