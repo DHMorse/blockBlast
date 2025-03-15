@@ -3,7 +3,6 @@ Main game class for BlockBlast.
 """
 import pygame
 import sys
-import time
 from typing import List, Tuple, Dict, Optional, Any
 
 from blockblast.utils.constants import (
@@ -14,9 +13,8 @@ from blockblast.utils.constants import (
 )
 from blockblast.utils.score import loadHighScore, saveHighScore
 from blockblast.game.blocks import generateRandomBlocks
-from blockblast.ui.components import createCrownIcon, drawBlock, createButton
+from blockblast.ui.components import createCrownIcon, drawBlock
 from blockblast.utils.audio import MusicPlayer
-from blockblast.game.ai import BlockBlastAI
 
 class BlockBlastGame:
     """
@@ -49,75 +47,6 @@ class BlockBlastGame:
         self.musicPlayer = MusicPlayer()
         # Start playing music
         self.musicPlayer.start()
-        
-        # AI button properties
-        self.aiButtonRect: Optional[pygame.Rect] = None
-        self.aiCancelButtonRect: Optional[pygame.Rect] = None
-        
-        # Initialize AI
-        self.ai = BlockBlastAI()
-        self.aiActive: bool = False
-        self.aiMoveDelay: float = 0.5  # Delay between AI moves in seconds
-        self.lastAiMoveTime: float = 0
-        self.aiThinking: bool = False  # Flag to indicate if AI is currently thinking
-        self.aiThinkingDots: int = 0  # For animated thinking indicator
-        self.aiThinkingTimer: float = 0  # For animated thinking indicator
-        
-        # AI progress indicators
-        self.aiProgress: float = 0.0  # Progress from 0.0 to 1.0
-        self.aiNodesExplored: int = 0
-        self.aiStartTime: float = 0
-        self.aiStatusMessage: str = ""
-        
-        # Pre-render common UI elements
-        self._initPrerenderedElements()
-        
-        # Cache for block placement validation
-        self.placementCache: Dict[str, bool] = {}
-        
-        # Grid coordinates (calculated once)
-        self.gridX = (SCREEN_WIDTH - GRID_SIZE * CELL_SIZE) // 2
-        self.gridY = GRID_PADDING + 80
-        
-        # Last update time for AI progress
-        self.lastProgressUpdateTime: float = 0
-        self.progressUpdateInterval: float = 0.5  # Update every 0.5 seconds
-    
-    def _initPrerenderedElements(self) -> None:
-        """
-        Pre-render common UI elements to improve performance.
-        """
-        # Pre-render grid background
-        self.gridBackground = pygame.Surface((GRID_SIZE * CELL_SIZE, GRID_SIZE * CELL_SIZE))
-        self.gridBackground.fill(DARK_BLUE_GRID)
-        
-        # Pre-render grid lines
-        self.gridLines = pygame.Surface((GRID_SIZE * CELL_SIZE, GRID_SIZE * CELL_SIZE), pygame.SRCALPHA)
-        for i in range(GRID_SIZE + 1):
-            # Vertical lines
-            pygame.draw.line(self.gridLines, GRID_LINE, 
-                            (i * CELL_SIZE, 0),
-                            (i * CELL_SIZE, GRID_SIZE * CELL_SIZE))
-            # Horizontal lines
-            pygame.draw.line(self.gridLines, GRID_LINE,
-                            (0, i * CELL_SIZE),
-                            (GRID_SIZE * CELL_SIZE, i * CELL_SIZE))
-        
-        # Pre-render score text
-        self.scoreTextSurface = self.smallFont.render("Score: ", True, WHITE)
-        self.highScoreTextSurface = self.smallFont.render("High Score: ", True, GOLD)
-        
-        # Pre-calculate block positions
-        self.blockPositions = []
-        blockY = SCREEN_HEIGHT - 150
-        totalBlocks = MAX_AVAILABLE_BLOCKS
-        blockWidth = 80
-        totalWidth = totalBlocks * blockWidth
-        spacing = (SCREEN_WIDTH - totalWidth) // (totalBlocks + 1)
-        
-        for i in range(totalBlocks):
-            blockX = spacing + i * (blockWidth + spacing)
-            self.blockPositions.append((blockX, blockY, blockWidth))
     
     def initGame(self) -> None:
         """
@@ -138,19 +67,6 @@ class BlockBlastGame:
         self.selectedBlockIndex: Optional[int] = None
         self.hoverCell: Optional[Tuple[int, int]] = None
         self.canPlaceBlock: bool = False
-        
-        # Clear caches
-        self.placementCache = {}
-        
-        # Pre-render score text
-        self._updateScoreText()
-    
-    def _updateScoreText(self) -> None:
-        """
-        Update the pre-rendered score text.
-        """
-        self.currentScoreText = self.smallFont.render(str(self.score), True, WHITE)
-        self.currentHighScoreText = self.smallFont.render(str(self.highScore), True, GOLD)
     
     def placeBlock(self, blockIndex: int, row: int, col: int) -> None:
         """
@@ -173,7 +89,6 @@ class BlockBlastGame:
         
         # Increase score
         self.score += 10
-        self._updateScoreText()
         
         # Check for completed rows or columns
         self.checkCompletedLines()
@@ -190,9 +105,6 @@ class BlockBlastGame:
             
         # Check if there are any valid moves left
         self.checkForGameOver()
-        
-        # Clear placement cache as grid has changed
-        self.placementCache = {}
     
     def checkForGameOver(self) -> None:
         """
@@ -236,18 +148,32 @@ class BlockBlastGame:
         """
         Draw the game grid with placed blocks.
         """
+        gridX = (SCREEN_WIDTH - GRID_SIZE * CELL_SIZE) // 2
+        gridY = GRID_PADDING + 80
+        
         # Draw grid background
-        self.screen.blit(self.gridBackground, (self.gridX, self.gridY))
+        pygame.draw.rect(self.screen, DARK_BLUE_GRID, 
+                        (gridX, gridY, 
+                         GRID_SIZE * CELL_SIZE, 
+                         GRID_SIZE * CELL_SIZE))
         
         # Draw grid lines
-        self.screen.blit(self.gridLines, (self.gridX, self.gridY))
+        for i in range(GRID_SIZE + 1):
+            # Vertical lines
+            pygame.draw.line(self.screen, GRID_LINE, 
+                            (gridX + i * CELL_SIZE, gridY),
+                            (gridX + i * CELL_SIZE, gridY + GRID_SIZE * CELL_SIZE))
+            # Horizontal lines
+            pygame.draw.line(self.screen, GRID_LINE,
+                            (gridX, gridY + i * CELL_SIZE),
+                            (gridX + GRID_SIZE * CELL_SIZE, gridY + i * CELL_SIZE))
         
         # Draw placed blocks
         for row in range(GRID_SIZE):
             for col in range(GRID_SIZE):
                 if self.grid[row][col]:
-                    blockX = self.gridX + col * CELL_SIZE
-                    blockY = self.gridY + row * CELL_SIZE
+                    blockX = gridX + col * CELL_SIZE
+                    blockY = gridY + row * CELL_SIZE
                     
                     # Extract color index from colorName (format: "color_X")
                     colorName = self.grid[row][col]
@@ -283,8 +209,8 @@ class BlockBlastGame:
                         )
             
             # Calculate position to draw the preview
-            previewX = self.gridX + hoverCol * CELL_SIZE
-            previewY = self.gridY + hoverRow * CELL_SIZE
+            previewX = gridX + hoverCol * CELL_SIZE
+            previewY = gridY + hoverRow * CELL_SIZE
             
             # Draw the preview
             self.screen.blit(previewSurface, (previewX, previewY))
@@ -351,12 +277,20 @@ class BlockBlastGame:
         """
         Draw the available blocks at the bottom of the screen.
         """
+        blockY = SCREEN_HEIGHT - 150
+        
+        # Calculate spacing based on number of blocks
+        totalBlocks = MAX_AVAILABLE_BLOCKS
+        blockWidth = 80
+        totalWidth = totalBlocks * blockWidth
+        spacing = (SCREEN_WIDTH - totalWidth) // (totalBlocks + 1)
+        
         for i, block in enumerate(self.availableBlocks):
+            blockX = spacing + i * (blockWidth + spacing)
+            
             # Skip drawing used blocks
             if self.usedBlocks[i]:
                 continue
-                
-            blockX, blockY, blockWidth = self.blockPositions[i]
                 
             # Draw selection highlight if this block is selected
             if self.selectedBlockIndex == i:
@@ -391,97 +325,23 @@ class BlockBlastGame:
     
     def drawScore(self) -> None:
         """
-        Draw the current score and high score.
+        Draw the score display at the top of the screen.
         """
-        # Draw score
-        self.screen.blit(self.scoreTextSurface, (20, 20))
-        self.screen.blit(self.currentScoreText, (20 + self.scoreTextSurface.get_width(), 20))
+        # Draw crown icon
+        self.screen.blit(self.crownIcon, (20, 20))
         
-        # Draw high score with crown icon
-        highScoreX = SCREEN_WIDTH - 20 - self.highScoreTextSurface.get_width() - self.currentHighScoreText.get_width()
-        self.screen.blit(self.highScoreTextSurface, (highScoreX, 20))
-        self.screen.blit(self.currentHighScoreText, (highScoreX + self.highScoreTextSurface.get_width(), 20))
-        self.screen.blit(self.crownIcon, (highScoreX - 35, 15))
-    
-    def drawAiButton(self) -> None:
-        """
-        Draw the AI button in the top center of the screen.
-        """
-        buttonWidth = 120
-        buttonHeight = 40
-        buttonX = (SCREEN_WIDTH - buttonWidth) // 2
-        buttonY = 20
+        # Draw score next to crown
+        scoreText = self.smallFont.render(str(self.score), True, WHITE)
+        self.screen.blit(scoreText, (60, 25))
         
-        # Choose button color and text based on AI state
-        if self.aiThinking:
-            # Show thinking animation with dots
-            currentTime = time.time()
-            if currentTime - self.aiThinkingTimer > 0.5:  # Update dots every 0.5 seconds
-                self.aiThinkingDots = (self.aiThinkingDots + 1) % 4
-                self.aiThinkingTimer = currentTime
-                
-            dots = "." * self.aiThinkingDots
-            buttonText = f"AI{dots}"
-            buttonColor = (255, 165, 0)  # Orange when thinking
-        else:
-            buttonText = "AI ON" if self.aiActive else "AI"
-            buttonColor = (0, 200, 0) if self.aiActive else (128, 0, 255)  # Green when active, Purple when inactive
+        # Draw large score in the center top
+        largeScoreText = self.largeFont.render(str(self.score), True, WHITE)
+        scoreRect = largeScoreText.get_rect(center=(SCREEN_WIDTH // 2, 60))
+        self.screen.blit(largeScoreText, scoreRect)
         
-        # Create the AI button
-        self.aiButtonRect = createButton(
-            self.screen, 
-            buttonText, 
-            buttonX, 
-            buttonY, 
-            buttonWidth, 
-            buttonHeight, 
-            buttonColor,
-            WHITE,
-            36
-        )
-        
-        # Draw thinking indicator and progress bar if AI is thinking
-        if self.aiThinking:
-            # Draw "Thinking..." text
-            thinkingText = self.tinyFont.render("Thinking...", True, WHITE)
-            self.screen.blit(thinkingText, (buttonX + buttonWidth // 2 - thinkingText.get_width() // 2, buttonY + buttonHeight + 5))
-            
-            # Draw progress bar
-            progressBarWidth = 200
-            progressBarHeight = 10
-            progressBarX = (SCREEN_WIDTH - progressBarWidth) // 2
-            progressBarY = buttonY + buttonHeight + 25
-            
-            # Draw background
-            pygame.draw.rect(self.screen, (50, 50, 50), (progressBarX, progressBarY, progressBarWidth, progressBarHeight))
-            
-            # Draw progress
-            filledWidth = int(progressBarWidth * self.aiProgress)
-            if filledWidth > 0:
-                pygame.draw.rect(self.screen, (0, 200, 0), (progressBarX, progressBarY, filledWidth, progressBarHeight))
-            
-            # Draw status message if available
-            if self.aiStatusMessage:
-                statusText = self.tinyFont.render(self.aiStatusMessage, True, WHITE)
-                self.screen.blit(statusText, (progressBarX, progressBarY + progressBarHeight + 5))
-            
-            # Draw cancel button
-            cancelButtonWidth = 80
-            cancelButtonHeight = 30
-            cancelButtonX = (SCREEN_WIDTH - cancelButtonWidth) // 2
-            cancelButtonY = progressBarY + progressBarHeight + 30
-            
-            self.aiCancelButtonRect = createButton(
-                self.screen,
-                "Cancel",
-                cancelButtonX,
-                cancelButtonY,
-                cancelButtonWidth,
-                cancelButtonHeight,
-                (200, 50, 50),  # Red color
-                WHITE,
-                20
-            )
+        # Draw high score in small text at the top right
+        highScoreText = self.tinyFont.render(f"High: {self.highScore}", True, GOLD)
+        self.screen.blit(highScoreText, (SCREEN_WIDTH - 100, 25))
     
     def getGridCoordinates(self) -> Tuple[int, int]:
         """
@@ -490,7 +350,9 @@ class BlockBlastGame:
         Returns:
             A tuple containing the x and y coordinates of the grid
         """
-        return self.gridX, self.gridY
+        gridX = (SCREEN_WIDTH - GRID_SIZE * CELL_SIZE) // 2
+        gridY = GRID_PADDING + 80
+        return gridX, gridY
     
     def getGridCellFromMouse(self, mousePos: Tuple[int, int]) -> Optional[Tuple[int, int]]:
         """
@@ -502,13 +364,15 @@ class BlockBlastGame:
         Returns:
             Grid cell as (row, col) or None if mouse is outside the grid
         """
+        gridX, gridY = self.getGridCoordinates()
+        
         # Check if mouse is within grid bounds
-        if (self.gridX <= mousePos[0] <= self.gridX + GRID_SIZE * CELL_SIZE and
-            self.gridY <= mousePos[1] <= self.gridY + GRID_SIZE * CELL_SIZE):
+        if (gridX <= mousePos[0] <= gridX + GRID_SIZE * CELL_SIZE and
+            gridY <= mousePos[1] <= gridY + GRID_SIZE * CELL_SIZE):
             
             # Calculate grid cell
-            col = (mousePos[0] - self.gridX) // CELL_SIZE
-            row = (mousePos[1] - self.gridY) // CELL_SIZE
+            col = (mousePos[0] - gridX) // CELL_SIZE
+            row = (mousePos[1] - gridY) // CELL_SIZE
             
             return row, col
         
@@ -529,28 +393,20 @@ class BlockBlastGame:
         if blockIndex is None:
             return False
         
-        # Check cache first
-        cacheKey = f"{blockIndex}_{row}_{col}"
-        if cacheKey in self.placementCache:
-            return self.placementCache[cacheKey]
-        
         block = self.availableBlocks[blockIndex]
         shape = block["shape"]
         
         # Check if the block is within grid bounds
         if (row + len(shape) > GRID_SIZE or 
             col + len(shape[0]) > GRID_SIZE):
-            self.placementCache[cacheKey] = False
             return False
         
         # Check if all cells required by the block are empty
         for r in range(len(shape)):
             for c in range(len(shape[0])):
                 if shape[r][c] and self.grid[row + r][col + c] is not None:
-                    self.placementCache[cacheKey] = False
                     return False
         
-        self.placementCache[cacheKey] = True
         return True
     
     def checkCompletedLines(self) -> None:
@@ -600,23 +456,6 @@ class BlockBlastGame:
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # Left mouse button
                     mousePos = pygame.mouse.get_pos()
-                    
-                    # Check if AI button was clicked
-                    if self.aiButtonRect and self.aiButtonRect.collidepoint(mousePos):
-                        # Don't toggle AI if it's currently thinking
-                        if not self.aiThinking:
-                            self.aiActive = not self.aiActive
-                            if self.aiActive:
-                                # Trigger the first AI move immediately
-                                self.lastAiMoveTime = 0
-                        return True
-                    
-                    # Check if cancel button was clicked during AI thinking
-                    if self.aiThinking and self.aiCancelButtonRect and self.aiCancelButtonRect.collidepoint(mousePos):
-                        self.ai.cancelSearch()  # Cancel the search in the AI
-                        self.aiThinking = False
-                        self.aiActive = False
-                        return True
                     
                     # Handle game over state
                     if self.gameState == STATE_GAME_OVER:
@@ -679,82 +518,6 @@ class BlockBlastGame:
         
         return True
     
-    def onAiMoveComplete(self, blockIndex: Optional[int], position: Optional[Tuple[int, int]]) -> None:
-        """
-        Callback function for when the AI completes its search.
-        
-        Args:
-            blockIndex: The index of the block to place
-            position: The position (row, col) to place the block
-        """
-        # If AI was cancelled, don't process the result
-        if not self.aiThinking:
-            return
-            
-        if blockIndex is not None and position is not None:
-            row, col = position
-            
-            # Select the block
-            self.selectedBlockIndex = blockIndex
-            
-            # Place the block
-            if self.canPlaceBlockAtPosition(blockIndex, row, col):
-                self.placeBlock(blockIndex, row, col)
-                self.selectedBlockIndex = None
-            else:
-                self.aiActive = False
-        else:
-            self.aiActive = False
-        
-        # Update AI state
-        self.aiThinking = False
-        self.lastAiMoveTime = time.time()
-    
-    def makeAiMove(self) -> None:
-        """
-        Make a move using the AI.
-        """
-        if self.gameState != STATE_PLAYING or not self.aiActive:
-            return
-        
-        # If AI is already thinking, don't start a new search
-        if self.aiThinking:
-            # Update progress information from the AI every 0.5 seconds
-            currentTime = time.time()
-            if currentTime - self.lastProgressUpdateTime >= self.progressUpdateInterval and self.ai.isSearchInProgress():
-                self.lastProgressUpdateTime = currentTime
-                progress = self.ai.getSearchProgress()
-                self.aiNodesExplored = progress['nodesExplored']
-                self.aiProgress = progress['progress']
-                currentDepth = progress.get('currentDepth', 0)
-                
-                # Update status message with best move if available
-                if progress['bestMove']:
-                    blockIndex, position, score = progress['bestMove']
-                    self.aiStatusMessage = f"Best move: Block {blockIndex} at {position} (depth: {currentDepth})"
-                elif self.aiNodesExplored > 0:
-                    elapsedTime = time.time() - self.aiStartTime
-                    self.aiStatusMessage = f"Thinking... depth {currentDepth} ({elapsedTime:.1f}s)"
-            return
-        
-        # Check if enough time has passed since the last AI move
-        currentTime = time.time()
-        if currentTime - self.lastAiMoveTime < self.aiMoveDelay:
-            return
-        
-        # Set AI thinking state
-        self.aiThinking = True
-        self.aiThinkingDots = 0
-        self.aiThinkingTimer = time.time()
-        self.aiProgress = 0.0
-        self.aiNodesExplored = 0
-        self.aiStartTime = time.time()
-        self.lastProgressUpdateTime = time.time()
-        self.aiStatusMessage = "Analyzing possible moves..."
-        
-        # Start the AI search in a separate thread
-        self.ai.findBestMoveThreaded(self, self.onAiMoveComplete)
-
     def run(self) -> None:
         """
         Main game loop.
@@ -766,16 +529,11 @@ class BlockBlastGame:
             # Handle events
             running = self.handleEvents()
             
-            # Make AI move if active
-            if self.aiActive and self.gameState == STATE_PLAYING:
-                self.makeAiMove()
-            
             # Draw background
             self.screen.fill(BLUE_BG)
             
             # Draw game elements
             self.drawScore()
-            self.drawAiButton()
             self.drawGrid()
             
             if self.gameState == STATE_PLAYING:
